@@ -19,8 +19,14 @@ def load_regression_csv(csv_path):
         header = [h.strip() for h in header]
         idx_in = header.index("input")
         idx_out = header.index("output")
+
         for row in reader:
-            rows.append((float(row[idx_in]), float(row[idx_out])))
+            if not row or all(not (c or "").strip() for c in row):
+                continue
+            x = float(row[idx_in])
+            y_val = float(row[idx_out])
+            rows.append((x, y_val))
+
     data = np.array(rows, dtype=np.float64)
     X = data[:, 0:1]
     y = data[:, 1:2]
@@ -30,7 +36,10 @@ def load_regression_csv(csv_path):
 def regression(csv_path, random_state, model_out):
     X, y = load_regression_csv(csv_path)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.25, random_state=random_state
+        X,
+        y,
+        test_size=config.REGRESSION_TEST_SIZE,
+        random_state=random_state,
     )
     scX, scY = StandardScaler(), StandardScaler()
     X_train = scX.fit_transform(X_train)
@@ -47,10 +56,14 @@ def regression(csv_path, random_state, model_out):
         seed=random_state,
     )
 
-    net.fit(X_train, y_train)
+    net.fit(X_train, y_train, X_val=X_test, y_val=y_test)
     train_mse = net.score(X_train, y_train)
     test_mse = net.score(X_test, y_test)
-    print(f"训练集 MSE: {train_mse:.6f}  测试集 MSE: {test_mse:.6f}")
+
+    print(
+        f"训练集 MSE (标准化空间): {train_mse:.6f}  "
+        f"测试集 MSE (标准化空间): {test_mse:.6f}"
+    )
 
     out_path = Path(model_out)
     save_bp_checkpoint(

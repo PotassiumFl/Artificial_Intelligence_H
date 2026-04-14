@@ -37,7 +37,6 @@ def train_classifier(image_root: str, random_state: int, model_out: str):
     val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"=== CNN 手写汉字分类（PyTorch），共 {num_classes} 类，设备: {device} ===")
     model = ChineseCharCNN(num_classes=num_classes).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
@@ -46,7 +45,14 @@ def train_classifier(image_root: str, random_state: int, model_out: str):
         weight_decay=config.WEIGHT_DECAY,
     )
 
+    use_early_stop = config.EARLY_STOP_PATIENCE > 0
+    best_val_acc = -1.0
+    best_state = None
+    patience_ctr = 0
+    last_epoch = 0
+
     for epoch in range(1, config.EPOCHS + 1):
+        last_epoch = epoch
         model.train()
         running_loss = 0.0
         n_batches = 0
@@ -86,6 +92,22 @@ def train_classifier(image_root: str, random_state: int, model_out: str):
         val_acc = val_correct / max(val_total, 1)
         avg_loss = running_loss / max(n_batches, 1)
 
+        if use_early_stop:
+            if val_acc > best_val_acc + config.EARLY_STOP_MIN_DELTA:
+                best_val_acc = val_acc
+                best_state = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+                patience_ctr = 0
+            else:
+                patience_ctr += 1
+                if patience_ctr >= config.EARLY_STOP_PATIENCE:
+                    print(
+                        f"早停于 Epoch {epoch:4d}/{config.EPOCHS}  "
+                        f"最佳验证集准确率={best_val_acc:.4f}"
+                    )
+                    break
+
         if (
             epoch == 1
             or epoch % max(1, config.EPOCHS // 10) == 0
@@ -97,7 +119,30 @@ def train_classifier(image_root: str, random_state: int, model_out: str):
                 f"训练集准确率={train_acc:.4f}  验证集准确率={val_acc:.4f}"
             )
 
-    print(f"\n最终 训练集准确率: {train_acc:.4f}  验证集准确率: {val_acc:.4f}")
+    if use_early_stop and best_state is not None:
+        model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
+        model.eval()
+        train_correct = train_total = 0
+        with torch.no_grad():
+            for xb, yb in train_loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                train_correct += (model(xb).argmax(dim=1) == yb).sum().item()
+                train_total += yb.size(0)
+        val_correct = val_total = 0
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                val_correct += (model(xb).argmax(dim=1) == yb).sum().item()
+                val_total += yb.size(0)
+        train_acc = train_correct / max(train_total, 1)
+        val_acc = val_correct / max(val_total, 1)
+
+    print(
+        f"\n最终（epoch {last_epoch}/{config.EPOCHS}）训练集准确率: {train_acc:.4f}  "
+        f"验证集准确率: {val_acc:.4f}"
+    )
 
     out_path = Path(model_out)
     save_cnn_checkpoint(

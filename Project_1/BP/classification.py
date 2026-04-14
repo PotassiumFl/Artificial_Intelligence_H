@@ -10,45 +10,42 @@ from checkpoint import load_bp_checkpoint, save_bp_checkpoint
 from net import Net
 
 
-def _sorted_class_dirs(root: Path):
-    dirs = [p for p in root.iterdir() if p.is_dir()]
-
-    def sort_key(p: Path):
-        return 0, int(p.name)
-
-    return sorted(dirs, key=sort_key)
-
-
 def load_classification_bmps(root_dir):
     root = Path(root_dir)
-    class_dirs = _sorted_class_dirs(root)
-    num_classes = len(class_dirs)
 
     features = []
     labels = []
     h, w = config.CLASS_IMAGE_SIZE
+    resample = Image.Resampling.LANCZOS
 
-    for class_idx, sub in enumerate(class_dirs):
-        bmps = sorted(sub.glob("*.bmp"))
+    for label in range(1, config.NUM_CLASSES + 1):
+        sub = root / str(label)
+
+        bmps = sorted(sub.glob("*.bmp")) + sorted(sub.glob("*.BMP"))
+
         for p in bmps:
-            img = Image.open(p).convert("L")  # 图片转灰度
-            img = img.resize((w, h), Image.Resampling.LANCZOS)
+            img = Image.open(p).convert("L")
+            img = img.resize((w, h), resample)
             arr = np.asarray(img, dtype=np.float64) / 255.0
             features.append(arr.reshape(-1))
-            labels.append(class_idx)
+            labels.append(label - 1)
 
     X = np.stack(features, axis=0)
     y_idx = np.array(labels, dtype=np.int64)
-    Y = np.eye(num_classes)[y_idx]
+    Y = np.eye(config.NUM_CLASSES)[y_idx]
     return X, Y
 
 
 def classification(image_root, random_state, model_out):
     X, Y = load_classification_bmps(image_root)
-    num_classes = Y.shape[1]
+    num_classes = config.NUM_CLASSES
     y_idx = np.argmax(Y, axis=1)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, Y, test_size=0.25, random_state=random_state, stratify=y_idx
+        X,
+        Y,
+        test_size=config.CLASSIFICATION_TEST_SIZE,
+        random_state=random_state,
+        stratify=y_idx,
     )
     sc = StandardScaler()
     X_train = sc.fit_transform(X_train)
@@ -63,7 +60,7 @@ def classification(image_root, random_state, model_out):
         seed=random_state,
     )
 
-    net.fit(X_train, y_train)
+    net.fit(X_train, y_train, X_val=X_test, y_val=y_test)
     acc_train = net.score(X_train, y_train)
     acc_test = net.score(X_test, y_test)
     print(f"训练集准确率: {acc_train:.4f}  测试集准确率: {acc_test:.4f}")

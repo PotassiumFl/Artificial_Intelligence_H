@@ -114,7 +114,38 @@ class Net(object):
         lr=config.LEARNING_RATE,
         batch_size=config.BATCH_SIZE,
         verbose=True,
+        X_val=None,
+        y_val=None,
+        early_stop_patience=None,
+        early_stop_min_delta=None,
     ):
+        if early_stop_patience is None:
+            early_stop_patience = config.EARLY_STOP_PATIENCE
+        if early_stop_min_delta is None:
+            early_stop_min_delta = config.EARLY_STOP_MIN_DELTA
+
+        use_early_stop = (
+            X_val is not None
+            and y_val is not None
+            and early_stop_patience > 0
+        )
+        if use_early_stop:
+            if self.task == "classification":
+                best_metric = -float("inf")
+
+                def _improved(new, cur):
+                    return new > cur + early_stop_min_delta
+
+            else:
+                best_metric = float("inf")
+
+                def _improved(new, cur):
+                    return new < cur - early_stop_min_delta
+
+            best_W = None
+            best_b = None
+            patience_ctr = 0
+
         n = X.shape[0]
         for ep in range(epochs):
             idx = self._rng.permutation(n)
@@ -129,8 +160,38 @@ class Net(object):
                 self.step(gW, gb, lr)
                 epoch_loss += loss
                 steps += 1
-            if verbose and (ep % max(1, epochs // 10) == 0 or ep == epochs - 1):
-                print(f"epoch {ep+1}/{epochs}  loss={epoch_loss / max(steps, 1):.6f}")
+
+            val_metric = None
+            if use_early_stop:
+                val_metric = self.score(X_val, y_val)
+                if _improved(val_metric, best_metric):
+                    best_metric = val_metric
+                    best_W = [w.copy() for w in self.W]
+                    best_b = [b.copy() for b in self.b]
+                    patience_ctr = 0
+                else:
+                    patience_ctr += 1
+                    if patience_ctr >= early_stop_patience:
+                        if verbose:
+                            print(
+                                f"早停于 epoch {ep + 1}/{epochs}  "
+                                f"验证集={'准确率' if self.task == 'classification' else 'MSE'}="
+                                f"{best_metric:.6f}"
+                            )
+                        break
+
+            if verbose and (
+                ep % max(1, epochs // 10) == 0 or ep == epochs - 1
+            ):
+                line = f"epoch {ep + 1}/{epochs}  loss={epoch_loss / max(steps, 1):.6f}"
+                if val_metric is not None:
+                    tag = "val_acc" if self.task == "classification" else "val_mse"
+                    line += f"  {tag}={val_metric:.6f}"
+                print(line)
+
+        if use_early_stop and best_W is not None:
+            self.W = best_W
+            self.b = best_b
 
     def predict(self, X):
         """回归：返回连续值；分类：返回类别下标。"""
