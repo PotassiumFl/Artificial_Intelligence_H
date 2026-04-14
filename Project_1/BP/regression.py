@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 import config
+from checkpoint import load_bp_checkpoint, save_bp_checkpoint
 from net import Net
 
 
@@ -26,7 +27,7 @@ def load_regression_csv(csv_path):
     return X, y
 
 
-def regression(csv_path, random_state):
+def regression(csv_path, random_state, model_out):
     X, y = load_regression_csv(csv_path)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=random_state
@@ -50,3 +51,19 @@ def regression(csv_path, random_state):
     train_mse = net.score(X_train, y_train)
     test_mse = net.score(X_test, y_test)
     print(f"训练集 MSE: {train_mse:.6f}  测试集 MSE: {test_mse:.6f}")
+
+    out_path = Path(model_out)
+    save_bp_checkpoint(
+        out_path, net, scX, random_state, task="regression", scaler_y=scY
+    )
+    print(f"已保存模型: {out_path}")
+
+
+def test_regression_all(csv_path, model_path):
+    ckpt = load_bp_checkpoint(Path(model_path))
+    X, y = load_regression_csv(csv_path)
+    X = ckpt["scaler_X"].transform(X)
+    y = ckpt["scaler_y"].transform(y)
+    net = Net.from_state(ckpt["net_state"])
+    mse = net.score(X, y)
+    print(f"全量数据 MSE（无划分）: {mse:.6f}")

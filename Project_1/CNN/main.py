@@ -1,12 +1,14 @@
 import argparse
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 import config
+from checkpoint import load_cnn_model, save_cnn_checkpoint
 from data import load_classification_bmps, train_val_datasets
 from model import ChineseCharCNN
 
@@ -19,7 +21,7 @@ def _set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def train_classifier(image_root: str, random_state: int):
+def train_classifier(image_root: str, random_state: int, model_out: str):
     _set_seed(random_state)
 
     X, y, num_classes = load_classification_bmps(image_root)
@@ -35,6 +37,7 @@ def train_classifier(image_root: str, random_state: int):
     val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"=== CNN 手写汉字分类（PyTorch），共 {num_classes} 类，设备: {device} ===")
     model = ChineseCharCNN(num_classes=num_classes).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
@@ -96,14 +99,59 @@ def train_classifier(image_root: str, random_state: int):
 
     print(f"\n最终 训练集准确率: {train_acc:.4f}  验证集准确率: {val_acc:.4f}")
 
+    out_path = Path(model_out)
+    save_cnn_checkpoint(
+        out_path, model, num_classes=num_classes, random_state=random_state
+    )
+    print(f"已保存模型: {out_path}")
+
+
+def test_classifier_all(image_root: str, model_path: str):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, ckpt = load_cnn_model(Path(model_path), device)
+
+    X, y, num_classes = load_classification_bmps(image_root)
+
+    ds = TensorDataset(
+        torch.from_numpy(X),
+        torch.from_numpy(y),
+    )
+    loader = DataLoader(
+        ds,
+        batch_size=config.BATCH_SIZE,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            logits = model(xb)
+            correct += (logits.argmax(dim=1) == yb).sum().item()
+            total += yb.size(0)
+
+    acc = correct / max(total, 1)
+    print(f"全量数据准确率（无划分）: {acc:.4f}")
+
 
 def _parse_args():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="CNN 手写汉字分类（PyTorch）")
     p.add_argument("--class-dir", type=str, required=True)
+    p.add_argument("--model-out", type=str, default="checkpoints/model.pt")
+    p.add_argument("--model-in", type=str, default=None)
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    run_seed = random.randint(1, int(1e9))
-    train_classifier(args.class_dir, random_state=run_seed)
+    if args.model_in:
+        test_classifier_all(args.class_dir, args.model_in)
+    else:
+        run_seed = random.randint(1, int(1e9))
+        train_classifier(
+            args.class_dir, random_state=run_seed, model_out=args.model_out
+        )

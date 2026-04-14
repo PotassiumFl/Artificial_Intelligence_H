@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 import config
+from checkpoint import load_bp_checkpoint, save_bp_checkpoint
 from net import Net
 
 
@@ -42,7 +43,7 @@ def load_classification_bmps(root_dir):
     return X, Y
 
 
-def classification(image_root, random_state):
+def classification(image_root, random_state, model_out):
     X, Y = load_classification_bmps(image_root)
     num_classes = Y.shape[1]
     y_idx = np.argmax(Y, axis=1)
@@ -66,3 +67,20 @@ def classification(image_root, random_state):
     acc_train = net.score(X_train, y_train)
     acc_test = net.score(X_test, y_test)
     print(f"训练集准确率: {acc_train:.4f}  测试集准确率: {acc_test:.4f}")
+
+    out_path = Path(model_out)
+    save_bp_checkpoint(
+        out_path, net, sc, random_state, task="classification", scaler_y=None
+    )
+    print(f"已保存模型: {out_path}")
+
+
+def test_classification_all(image_root, model_path):
+    ckpt = load_bp_checkpoint(Path(model_path))
+    if ckpt["task"] != "classification":
+        raise ValueError("检查点不是分类模型")
+    X, Y = load_classification_bmps(image_root)
+    X = ckpt["scaler_X"].transform(X)
+    net = Net.from_state(ckpt["net_state"])
+    acc = net.score(X, Y)
+    print(f"全量数据准确率（无划分）: {acc:.4f}")

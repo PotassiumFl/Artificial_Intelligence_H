@@ -147,3 +147,26 @@ class Net(object):
             return np.mean(pred == y_cls)
         mse = np.mean((pred - y) ** 2)
         return mse
+
+    def get_state(self):
+        return {
+            "task": self.task,
+            "input_size": self.input_size,
+            "output_size": self.output_size,
+            "hidden_sizes": list(self.hidden_sizes),
+            "W": [w.copy() for w in self.W],
+            "b": [b.copy() for b in self.b],
+        }
+
+    @classmethod
+    def from_state(cls, state, seed=0):
+        net = cls(
+            state["input_size"],
+            state["hidden_sizes"],
+            state["output_size"],
+            state["task"],
+            seed,
+        )
+        net.W = [w.copy() for w in state["W"]]
+        net.b = [b.copy() for b in state["b"]]
+        return net
