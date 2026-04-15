@@ -9,36 +9,26 @@ from torch.utils.data import TensorDataset
 import config
 
 
-def _sorted_class_dirs(root: Path):
-    dirs = [p for p in root.iterdir() if p.is_dir()]
-
-    def sort_key(p: Path):
-        return 0, int(p.name)
-
-    return sorted(dirs, key=sort_key)
-
-
 def load_classification_bmps(root_dir):
     root = Path(root_dir)
-    class_dirs = _sorted_class_dirs(root)
-    num_classes = len(class_dirs)
 
     images = []
     labels = []
     h, w = config.CLASS_IMAGE_SIZE
 
-    for class_idx, sub in enumerate(class_dirs):
-        bmps = sorted(sub.glob("*.bmp"))
+    for label in range(1, config.NUM_CLASSES + 1):
+        sub = root / str(label)
+        bmps = sorted(sub.glob("*.bmp")) + sorted(sub.glob("*.BMP"))
         for p in bmps:
             img = Image.open(p).convert("L")
             img = img.resize((w, h), Image.Resampling.LANCZOS)
             arr = np.asarray(img, dtype=np.float32) / 255.0
             images.append(arr[np.newaxis, ...])  # (1, H, W)
-            labels.append(class_idx)
+            labels.append(label - 1)
 
     X = np.stack(images, axis=0)  # (N, 1, H, W)
     y = np.array(labels, dtype=np.int64)
-    return X, y, num_classes
+    return X, y
 
 
 def train_val_datasets(X, y, val_fraction, random_state):

@@ -7,8 +7,8 @@ def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
 
 
-def sigmoid_prime_from_z(z):
-    s = sigmoid(z)
+def sigmoid_prime(x):
+    s = sigmoid(x)
     return s * (1.0 - s)
 
 
@@ -25,12 +25,11 @@ class Net(object):
         self.output_size = output_size
         self.hidden_sizes = hidden_sizes
         self._rng = np.random.default_rng(seed)
+        self.W = []
+        self.b = []
         self._init_weights()
 
     def _init_weights(self):
-        """使用"""
-        self.W = []
-        self.b = []
         dims = [self.input_size] + self.hidden_sizes + [self.output_size]
         for i in range(len(dims) - 1):
             fan_in, fan_out = dims[i], dims[i + 1]
@@ -41,7 +40,6 @@ class Net(object):
             self.b.append(b)
 
     def forward(self, X):
-        """X: (batch, input_size)。返回 output、缓存（用于反向传播）。"""
         self._cache = {"a": [X]}
         a = X
         for i in range(len(self.hidden_sizes)):
@@ -59,7 +57,6 @@ class Net(object):
         return out
 
     def _loss_and_grad_output(self, y_true, batch_size):
-        """对输出层 logits z_out 的梯度 dL/dz_out；同时返回标量 loss。"""
         z_out = self._cache["z_out"]
         if self.task == "regression":
             pred = z_out
@@ -67,7 +64,6 @@ class Net(object):
             loss = 0.5 * np.mean(np.sum(diff**2, axis=1))
             grad_z = diff / batch_size
             return loss, grad_z
-        # classification: y_true one-hot (batch, classes)
         prob = softmax(z_out)
         eps = 1e-12
         loss = -np.mean(np.sum(y_true * np.log(prob + eps), axis=1))
@@ -92,12 +88,12 @@ class Net(object):
 
         for i in range(L - 1, -1, -1):
             z_i = z_hidden[i]
-            grad_z_h = grad_a * sigmoid_prime_from_z(z_i)
+            grad_z = grad_a * sigmoid_prime(z_i)
             a_prev = a_list[i]
-            grads_W[i] = a_prev.T @ grad_z_h
-            grads_b[i] = np.sum(grad_z_h, axis=0, keepdims=True)
+            grads_W[i] = a_prev.T @ grad_z
+            grads_b[i] = np.sum(grad_z, axis=0, keepdims=True)
             if i > 0:
-                grad_a = grad_z_h @ self.W[i].T
+                grad_a = grad_z @ self.W[i].T
 
         return loss, grads_W, grads_b
 
@@ -105,6 +101,12 @@ class Net(object):
         for i in range(len(self.W)):
             self.W[i] -= lr * grads_W[i]
             self.b[i] -= lr * grads_b[i]
+
+    def compute_loss(self, X, y):
+        self.forward(X)
+        batch_size = y.shape[0]
+        loss, _ = self._loss_and_grad_output(y, batch_size)
+        return loss
 
     def fit(
         self,
@@ -124,24 +126,20 @@ class Net(object):
         if early_stop_min_delta is None:
             early_stop_min_delta = config.EARLY_STOP_MIN_DELTA
 
+        def _val_loss_improved(val_loss, best_val_loss, rel_delta):
+            if best_val_loss == float("inf"):
+                return True
+            if rel_delta > 0:
+                if best_val_loss <= 0:
+                    return val_loss < best_val_loss
+                return val_loss < best_val_loss * (1.0 - rel_delta)
+            return val_loss < best_val_loss
+
         use_early_stop = (
-            X_val is not None
-            and y_val is not None
-            and early_stop_patience > 0
+            X_val is not None and y_val is not None and early_stop_patience > 0
         )
         if use_early_stop:
-            if self.task == "classification":
-                best_metric = -float("inf")
-
-                def _improved(new, cur):
-                    return new > cur + early_stop_min_delta
-
-            else:
-                best_metric = float("inf")
-
-                def _improved(new, cur):
-                    return new < cur - early_stop_min_delta
-
+            best_val_loss = float("inf")
             best_W = None
             best_b = None
             patience_ctr = 0
@@ -161,11 +159,10 @@ class Net(object):
                 epoch_loss += loss
                 steps += 1
 
-            val_metric = None
+            val_loss = self.compute_loss(X_val, y_val)
             if use_early_stop:
-                val_metric = self.score(X_val, y_val)
-                if _improved(val_metric, best_metric):
-                    best_metric = val_metric
+                if _val_loss_improved(val_loss, best_val_loss, early_stop_min_delta):
+                    best_val_loss = val_loss
                     best_W = [w.copy() for w in self.W]
                     best_b = [b.copy() for b in self.b]
                     patience_ctr = 0
@@ -175,18 +172,12 @@ class Net(object):
                         if verbose:
                             print(
                                 f"早停于 epoch {ep + 1}/{epochs}  "
-                                f"验证集={'准确率' if self.task == 'classification' else 'MSE'}="
-                                f"{best_metric:.6f}"
+                                f"验证集 loss={best_val_loss:.6f}"
                             )
                         break
 
-            if verbose and (
-                ep % max(1, epochs // 10) == 0 or ep == epochs - 1
-            ):
-                line = f"epoch {ep + 1}/{epochs}  loss={epoch_loss / max(steps, 1):.6f}"
-                if val_metric is not None:
-                    tag = "val_acc" if self.task == "classification" else "val_mse"
-                    line += f"  {tag}={val_metric:.6f}"
+            if verbose and (ep % max(1, epochs // 10) == 0 or ep == epochs - 1):
+                line = f"epoch {ep + 1}/{epochs}  loss={epoch_loss / max(steps, 1):.6f}  val_loss={val_loss:.6f}"
                 print(line)
 
         if use_early_stop and best_W is not None:
@@ -194,14 +185,12 @@ class Net(object):
             self.b = best_b
 
     def predict(self, X):
-        """回归：返回连续值；分类：返回类别下标。"""
         out = self.forward(X)
         if self.task == "classification":
             return np.argmax(out, axis=1)
         return out
 
     def score(self, X, y):
-        """回归：MSE；分类：准确率。"""
         pred = self.predict(X)
         if self.task == "classification":
             y_cls = np.argmax(y, axis=1)
