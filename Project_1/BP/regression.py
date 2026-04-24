@@ -33,6 +33,14 @@ def load_regression_csv(csv_path):
     return X, y
 
 
+def mae_on_original_y(net, X, y_scaled, scaler_y):
+    """在 y 的原始量纲上计算 MAE（预测与标签均经 scaler_y 反标准化）。"""
+    pred = net.predict(X)
+    pred_o = scaler_y.inverse_transform(pred)
+    y_o = scaler_y.inverse_transform(y_scaled)
+    return float(np.mean(np.abs(pred_o - y_o)))
+
+
 def regression(csv_path, random_state, model_out):
     X, y = load_regression_csv(csv_path)
     X_train, X_test, y_train, y_test = train_test_split(
@@ -57,12 +65,12 @@ def regression(csv_path, random_state, model_out):
     )
 
     net.fit(X_train, y_train, X_val=X_test, y_val=y_test)
-    train_mse = net.score(X_train, y_train)
-    test_mse = net.score(X_test, y_test)
+    train_mae = mae_on_original_y(net, X_train, y_train, scY)
+    test_mae = mae_on_original_y(net, X_test, y_test, scY)
 
     print(
-        f"训练集 MSE (标准化空间): {train_mse:.6f}  "
-        f"测试集 MSE (标准化空间): {test_mse:.6f}"
+        f"训练集 MAE (y 原始尺度): {train_mae:.6f}  "
+        f"测试集 MAE (y 原始尺度): {test_mae:.6f}"
     )
 
     out_path = Path(model_out)
@@ -76,7 +84,7 @@ def test_regression_all(csv_path, model_path):
     ckpt = load_bp_checkpoint(Path(model_path))
     X, y = load_regression_csv(csv_path)
     X = ckpt["scaler_X"].transform(X)
-    y = ckpt["scaler_y"].transform(y)
+    y_s = ckpt["scaler_y"].transform(y)
     net = Net.from_state(ckpt["net_state"])
-    mse = net.score(X, y)
-    print(f"全量数据 MSE（无划分）: {mse:.6f}")
+    mae = mae_on_original_y(net, X, y_s, ckpt["scaler_y"])
+    print(f"全量数据 MAE（y 原始尺度，无划分）: {mae:.6f}")

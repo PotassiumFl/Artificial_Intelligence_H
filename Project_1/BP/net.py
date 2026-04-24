@@ -195,8 +195,8 @@ class Net(object):
         if self.task == "classification":
             y_cls = np.argmax(y, axis=1)
             return np.mean(pred == y_cls)
-        mse = np.mean((pred - y) ** 2)
-        return mse
+        mae = np.mean(np.absolute(pred - y))
+        return mae
 
     def get_state(self):
         return {
