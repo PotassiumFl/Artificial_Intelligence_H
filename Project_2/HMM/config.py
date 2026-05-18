@@ -1,0 +1,8 @@
+TRAIN_FILE = "train.txt"
+VAL_FILE = "validation.txt"
+TAG_FILE = "tag.txt"
+
+LAPLACE_INIT = 1e-3
+LAPLACE_TRANSITION = 1e-3
+LAPLACE_EMISSION = 1e-3
+UNK_MIN_FREQ = 1
